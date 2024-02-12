@@ -21,9 +21,10 @@ target_compile_features(ddpg_turtlebot3 PUBLIC c_std_99 cxx_std_17)  # Require C
 install(TARGETS ddpg_turtlebot3
   DESTINATION lib/${PROJECT_NAME})
 
-install(PROGRAMS  
-  ddpg_ros2/tb3_gym_env.py  
+install(PROGRAMS
+  ddpg_ros2/tb3_gym_env.py
   ddpg_ros2/respawn_goal.py
+  ddpg_ros2/tb3_ddpg.py
   DESTINATION lib/${PROJECT_NAME} )
 
 install(DIRECTORY launch DESTINATION share/${PROJECT_NAME}/)
