@@ -10,7 +10,7 @@ find_package(ament_cmake REQUIRED)
 find_package(ament_cmake_python REQUIRED)
 # uncomment the following section in order to fill in
 # further dependencies manually.
-# find_package(<dependency> REQUIRED)
+find_package(rosidl_default_generators REQUIRED)
 
 add_executable(ddpg_turtlebot3 src/ddpg_turtlebot3.cpp)
 target_include_directories(ddpg_turtlebot3 PUBLIC
@@ -22,10 +22,16 @@ install(TARGETS ddpg_turtlebot3
   DESTINATION lib/${PROJECT_NAME})
 
 install(PROGRAMS
-  ddpg_ros2/tb3_gym_env.py
-  ddpg_ros2/respawn_goal.py
-  ddpg_ros2/tb3_ddpg.py
+  nodes/tb3_gym_env.py
+  nodes/respawn_goal.py
+  nodes/tb3_ddpg.py
+
+  src/service_sync_call.py
   DESTINATION lib/${PROJECT_NAME} )
+
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "srv/RespawnGoal.srv"
+ )
 
 install(DIRECTORY launch DESTINATION share/${PROJECT_NAME}/)
 

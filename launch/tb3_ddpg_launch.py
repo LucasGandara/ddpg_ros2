@@ -1,9 +1,11 @@
-from launch import LaunchDescription
+import os
+
+from ament_index_python import get_package_share_directory
 from launch_ros.actions import Node
+
+from launch import LaunchDescription
 from launch.actions import IncludeLaunchDescription, SetEnvironmentVariable
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from ament_index_python import get_package_share_directory
-import os
 
 
 def generate_launch_description():
@@ -18,6 +20,11 @@ def generate_launch_description():
                     )
                 )
             ),
-            Node(package="ddpg_ros2", executable="tb3_ddpg.py", name="ddpg"),
+            Node(
+                package="ddpg_ros2",
+                executable="respawn_goal.py",
+                name="respawn_goal",
+            ),
+            # Node(package="ddpg_ros2", executable="tb3_ddpg.py", name="ddpg"),
         ]
     )

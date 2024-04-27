@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf8 -*-
 
-import rclpy
-from rclpy.node import Node
-from rclpy.executors import ExternalShutdownException
+import signal
 import sys
-from tb3_gym_env import Env
+
 import gymnasium as gym
-from utils import OUActionNoise, get_actor, get_critic
 import numpy as np
+import rclpy
+import rclpy.executors
 import tensorflow as tf
-import itertools
+from geometry_msgs.msg import Twist
+from rclpy.executors import ExternalShutdownException
+from rclpy.node import Node
+from tb3_gym_env import Env
+from utils import OUActionNoise, get_actor, get_critic
 
 
 class DDPG(Node):
@@ -27,10 +30,11 @@ class DDPG(Node):
         debug=False,
     ) -> None:
         super().__init__("DDPG")
-        self.get_logger().debug("Starting DDPG Node")
 
         if debug:
             self.get_logger().set_level(rclpy.logging.LoggingSeverity.DEBUG)
+
+        self.get_logger().info("Starting DDPG Node")
 
         self.env = Env(self)
 
@@ -53,6 +57,8 @@ class DDPG(Node):
             + self.env.action_space["angular"].shape[0]
         )
         self.get_logger().info(f"Size of actions --> {self.num_actions}")
+
+        self.rate = self.create_rate(0.5)
 
         # Hyperparameters
         std_dev = std_dev
@@ -106,6 +112,16 @@ class DDPG(Node):
         self.reward_buffer = np.zeros((self.buffer_capacity, 1))
         self.next_state_buffer = np.zeros((self.buffer_capacity, self.num_states))
 
+        signal.signal(signal.SIGINT, self.signal_handler)
+
+    def signal_handler(self, _, __):
+        print("\nDestroying node")
+        self.cmd_publisher = self.create_publisher(Twist, "/cmd_vel", 10)
+        self.cmd_publisher.publish(Twist())
+        rclpy.try_shutdown()
+        self.destroy_node()
+        sys.exit(0)
+
     # Takes (s,a,r,s') observation tuple as input
     def record(self, obs_tuple):
         # Set index to zero if buffer_capacity is exceeded,
@@ -131,6 +147,7 @@ class DDPG(Node):
         return np.squeeze(legal_action)
 
     def run(self):
+        self.get_logger().debug("Start the training!!")
         total_episodes = 1
 
         # To store reward history of each episode
@@ -140,6 +157,8 @@ class DDPG(Node):
         avg_reward_list = []
 
         for ep in range(total_episodes):
+            self.get_logger().debug(f"Episode {ep} of {total_episodes}")
+
             prev_state, _ = self.env.reset()
             laser = prev_state["laser"]
             distance_to_goal = [prev_state["distance_to_goal"]]
@@ -155,14 +174,22 @@ class DDPG(Node):
             step_number = 0
 
             while True:
+                step_number += 1
+
                 tf_prev_state = tf.expand_dims(tf.convert_to_tensor(prev_state), 0)
 
                 action = self.policy(
                     tf_prev_state, self.ou_noise, self.lower_bound, self.upper_bound
                 )
+                self.get_logger().debug(f"action taken: {action}")
 
                 # Recieve state and reward from environment.
-                state, reward, done, info, _ = self.env.step(action)
+                state, reward, done, truncated, _ = self.env.step(action)
+
+                if truncated:
+                    self.get_logger().info(
+                        "You reached a goal! \nRespawning a new goal"
+                    )
 
                 laser = self.env.laser_scan
                 distance_to_goal = state["distance_to_goal"]
@@ -177,16 +204,13 @@ class DDPG(Node):
                 self.record((prev_state, action, reward, state))
                 episodic_reward += reward
 
-                break
+                if done:
+                    break
+
+                rclpy.spin_once(self)
 
 
 def main(args=None):
-    import argparse
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--debug", "--debug", type=bool, default=False)
-
-    args = parser.parse_args()
 
     rclpy.init()
 
@@ -205,23 +229,32 @@ def main(args=None):
         noise_object=noise,
         actor_lr=actor_lr,
         critic_lr=critic_lr,
-        debug=True,
+        debug=args.debug,
     )
 
-    buffer.run()
+    # buffer.run()
+
+    buffer_executor = rclpy.executors.MultiThreadedExecutor(4)
+    buffer_executor.add_node(buffer)
 
     try:
-        rclpy.spin(buffer)
+        buffer_executor.spin()
     except KeyboardInterrupt:
         pass
     except ExternalShutdownException:
         sys.exit(1)
     finally:
         print("\nDestroying node")
+        buffer_executor.shutdown()
         rclpy.try_shutdown()
-        buffer.destroy_node()
-    return 0
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--debug", "--debug", type=bool, default=False)
+
+    args = parser.parse_args()
+
+    main(args)

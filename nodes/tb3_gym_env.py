@@ -2,27 +2,30 @@
 # turtlebot model: ~/ros2_ws/install/turtlebot3_gazebo/share/turtlebot3_gazebo/launch/spawn_turtlebot3.launch.py
 
 import math
+import sys
+
 import gymnasium as gym
 import numpy as np
-from rclpy.node import Node
-from sensor_msgs.msg import LaserScan
-from rclpy.executors import ExternalShutdownException
-from respawn_goal import Respawn
-from geometry_msgs.msg import Twist, Quaternion, Point
+import rclpy
+from geometry_msgs.msg import Point, Quaternion, Twist
 from nav_msgs.msg import Odometry
-import sys
-from utils import euler_from_quaternion
+from rclpy.executors import ExternalShutdownException
+from rclpy.node import Node
+from respawn_goal import Respawn
+from sensor_msgs.msg import LaserScan
+
+from nodes.utils import euler_from_quaternion
 
 
 class Env(gym.Env):
     metadata = {"render_modes": ["gazebo"]}
 
-    def __init__(self, node: Node) -> None:
+    def __init__(self) -> None:
         # ROS related stuff
         self.node = node
         self.laser_scan = np.zeros(24)
-        node.create_subscription(LaserScan, "/scan", self.laser_callback, 10)
-        node.create_subscription(Odometry, "/odom", self.odom_callback, 10)
+        self.node.create_subscription(LaserScan, "/scan", self.laser_callback, 10)
+        self.node.create_subscription(Odometry, "/odom", self.odom_callback, 10)
 
         self.cmd_publisher = node.create_publisher(Twist, "/cmd_vel", 10)
 
@@ -30,7 +33,7 @@ class Env(gym.Env):
         self.position = Point()
 
         # Goal object
-        self.respawn_goal = Respawn(node)
+        self.respawn_goal = Respawn("Respawn_node")
 
         # Env related stuff
         self.min_distance = 1.5
@@ -96,7 +99,15 @@ class Env(gym.Env):
 
         return goal_distance
 
-    def set_reward(self, state: dict, done: bool):
+    def get_angle_to_goal(self):
+        goal_angle = math.atan2(
+            self.respawn_goal.goal_position.position.y - self.position.y,
+            self.respawn_goal.goal_position.position.x - self.position.x,
+        )
+
+        return goal_angle
+
+    def set_reward(self, state: dict, is_terminal: dict):
         current_distance = state["distance_to_goal"]
         heading = state["angle_to_goal"]
 
@@ -111,29 +122,31 @@ class Env(gym.Env):
         else:
             reward = 0
 
-        if done:
+        if is_terminal["collision"]:
             self.node.get_logger().info("Collision !!")
             reward = -4000
             self.cmd_publisher.publish(Twist())
 
-        if current_distance <= self.min_distance:
+        if is_terminal["goal"]:
             self.node.get_logger().info("Goal !!")
             self.cmd_publisher.publish(Twist())
+            self.respawn_goal.respawn_entity()
             reward = 4000
 
         return reward
 
     def _get_obs(self):
-        distance_to_goal = 1
-        angle_to_goal = 0
+        distance_to_goal = self.get_goal_distance()
+        angle_to_goal = self.get_angle_to_goal()
 
         done = False
+        goal = False
         if min(self.laser_scan) < self.min_distance:
             done = True
             self.node.get_logger().info("Collision !!")
 
         if self.get_goal_distance() <= 0.2:
-            done = True
+            goal = True
             self.node.get_logger().info("Goal !!")
 
         return (
@@ -144,7 +157,7 @@ class Env(gym.Env):
                     "angle_to_goal": angle_to_goal,
                 }
             ),
-            done,
+            dict({"collision": done, "goal": goal}),
         )
 
     def _get_info(self):
@@ -172,10 +185,11 @@ class Env(gym.Env):
         vel_cmd.angular.z = angular
         self.cmd_publisher.publish(vel_cmd)
 
-        observation, done = self._get_obs()
-        reward = self.set_reward(observation, done)
+        observation, is_terminal = self._get_obs()
+        reward = self.set_reward(observation, is_terminal)
         info = self._get_info()
-        truncated = False
+        done = is_terminal["collision"]
+        truncated = is_terminal["goal"]
 
         return observation, reward, done, truncated, info
 

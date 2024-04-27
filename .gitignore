@@ -2,4 +2,6 @@
 env/
 include/
 .env
-
+build/
+install/
+log/
