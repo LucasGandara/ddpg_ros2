@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 
+import keras
 import numpy as np
 import tensorflow as tf
-import keras
 
 
 class OUActionNoise(object):
@@ -52,7 +52,6 @@ def get_actor(
         num_actions, activation="tanh", kernel_initializer=last_init
     )(out)
 
-    # Our upper bound is 2.0 for Pendulum.
     outputs = outputs * upper_bound
     model = tf.keras.Model(inputs, outputs, name=name)
     return model

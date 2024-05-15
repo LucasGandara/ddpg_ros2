@@ -4,55 +4,105 @@
 import math
 import sys
 
-import gymnasium as gym
 import numpy as np
 import rclpy
-from geometry_msgs.msg import Point, Quaternion, Twist
+import rclpy.callback_groups
+import rclpy.executors
+import rclpy.logging
+from geometry_msgs.msg import Point, Pose, Quaternion, Twist
 from nav_msgs.msg import Odometry
+from rcl_interfaces.msg import ParameterDescriptor, ParameterType
 from rclpy.executors import ExternalShutdownException
+from rclpy.logging import LoggingSeverity
 from rclpy.node import Node
-from respawn_goal import Respawn
 from sensor_msgs.msg import LaserScan
+from utils import euler_from_quaternion
 
-from nodes.utils import euler_from_quaternion
+from ddpg_ros2.srv import EnvironmentObservation, RespawnGoal
 
 
-class Env(gym.Env):
-    metadata = {"render_modes": ["gazebo"]}
+class Env(Node):
 
-    def __init__(self) -> None:
+    def __init__(self, node_name, debug_level=LoggingSeverity.INFO) -> None:
+        super().__init__(node_name)
+        self.get_logger().set_level(debug_level)
+
+        self.get_logger().info("Starting tb3_gym_env node")
         # ROS related stuff
-        self.node = node
-        self.laser_scan = np.zeros(24)
-        self.node.create_subscription(LaserScan, "/scan", self.laser_callback, 10)
-        self.node.create_subscription(Odometry, "/odom", self.odom_callback, 10)
+        self.laser_scan = []
 
-        self.cmd_publisher = node.create_publisher(Twist, "/cmd_vel", 10)
+        self.odom_callback_group = rclpy.callback_groups.ReentrantCallbackGroup()
+        self.callback_group_1 = rclpy.callback_groups.ReentrantCallbackGroup()
+        self.callback_group_2 = rclpy.callback_groups.ReentrantCallbackGroup()
+
+        self.create_subscription(
+            LaserScan,
+            topic="/scan",
+            callback=self.laser_callback,
+            qos_profile=10,
+            callback_group=self.callback_group_1,
+        )
+        self.create_subscription(
+            Odometry,
+            topic="/odom",
+            callback=self.odom_callback,
+            qos_profile=10,
+            callback_group=self.odom_callback_group,
+        )
 
         # Init odom variable
         self.position = Point()
 
         # Goal object
-        self.respawn_goal = Respawn("Respawn_node")
+        self.respawn_goal_client = self.create_client(
+            RespawnGoal,
+            "/ddpg_ros2/respawn_env_goal",
+            callback_group=self.callback_group_2,
+        )
+
+        self.goal_position = Pose()
+        self.goal_position.position.x = 0.6
 
         # Env related stuff
         self.min_distance = 1.5
         self.max_distance = 3.5
 
-        self.action_space = gym.spaces.Dict(
-            {
-                "linear": gym.spaces.Box(low=0, high=1.5, shape=(1,)),
-                "angular": gym.spaces.Box(low=0, high=1.5, shape=(1,)),
-            }
+        self.num_observation_space = (
+            24 + 1 + 1
+        )  # Laser + distance to goal + angle to goal
+        self.declare_parameter(
+            "num_observation_space",
+            self.num_observation_space,
+            descriptor=ParameterDescriptor(
+                name="num_observation_space",
+                type=ParameterType.PARAMETER_INTEGER,
+                description="Shape of the observation space",
+                additional_constraints="The value must be an integer",
+            ),
+        )
+        self.declare_parameter(
+            "upper_bound",
+            1.5,
+            descriptor=ParameterDescriptor(
+                name="upper bound of the actions",
+                type=ParameterType.PARAMETER_INTEGER,
+                description="Upper bound of the action value",
+                additional_constraints="The value must be an integer",
+            ),
+        )
+        self.declare_parameter(
+            "lower_bound",
+            -1.5,
+            descriptor=ParameterDescriptor(
+                name="lower bound of the actions",
+                type=ParameterType.PARAMETER_INTEGER,
+                description="Lower bound of the action value",
+                additional_constraints="The value must be an integer",
+            ),
         )
 
-        self.observation_space = gym.spaces.Dict(
-            {
-                "laser": gym.spaces.Box(low=0, high=3.5, shape=(24,)),
-                "distance_to_goal": gym.spaces.Box(low=0, high=3.5, shape=(1,)),
-                "angle_to_goal": gym.spaces.Box(low=-np.pi, high=np.pi, shape=(1,)),
-            }
-        )
+        self.cmd_publisher = self.create_publisher(Twist, "/cmd_vel", 10)
+        self.create_service(EnvironmentObservation, "reset_env", self.reset_callback)
 
     def odom_callback(self, msg: Odometry):
         self.position = msg.pose.pose.position
@@ -67,8 +117,8 @@ class Env(gym.Env):
         _, _, yaw = euler_from_quaternion(orientation_list)
 
         goal_angle = math.atan2(
-            self.respawn_goal.goal_position.position.y - self.position.y,
-            self.respawn_goal.goal_position.position.x - self.position.x,
+            self.goal_position.position.y - self.position.y,
+            self.goal_position.position.x - self.position.x,
         )
 
         heading = goal_angle - yaw
@@ -86,13 +136,13 @@ class Env(gym.Env):
         self.max_distance = msg.range_max
         self.laser_scan = np.clip(
             msg.ranges, self.min_distance - 0.1, self.max_distance
-        )
+        ).tolist()
 
     def get_goal_distance(self):
         goal_distance = round(
             math.hypot(
-                self.respawn_goal.goal_position.position.x - self.position.x,
-                self.respawn_goal.goal_position.position.y - self.position.y,
+                self.goal_position.position.x - self.position.x,
+                self.goal_position.position.y - self.position.y,
             ),
             2,
         )
@@ -101,8 +151,8 @@ class Env(gym.Env):
 
     def get_angle_to_goal(self):
         goal_angle = math.atan2(
-            self.respawn_goal.goal_position.position.y - self.position.y,
-            self.respawn_goal.goal_position.position.x - self.position.x,
+            self.goal_position.position.y - self.position.y,
+            self.goal_position.position.x - self.position.x,
         )
 
         return goal_angle
@@ -123,12 +173,12 @@ class Env(gym.Env):
             reward = 0
 
         if is_terminal["collision"]:
-            self.node.get_logger().info("Collision !!")
+            self.get_logger().info("Collision !!")
             reward = -4000
             self.cmd_publisher.publish(Twist())
 
         if is_terminal["goal"]:
-            self.node.get_logger().info("Goal !!")
+            self.get_logger().info("Goal !!")
             self.cmd_publisher.publish(Twist())
             self.respawn_goal.respawn_entity()
             reward = 4000
@@ -143,11 +193,11 @@ class Env(gym.Env):
         goal = False
         if min(self.laser_scan) < self.min_distance:
             done = True
-            self.node.get_logger().info("Collision !!")
+            self.get_logger().info("Collision !!")
 
         if self.get_goal_distance() <= 0.2:
             goal = True
-            self.node.get_logger().info("Goal !!")
+            self.get_logger().info("Goal !!")
 
         return (
             dict(
@@ -160,21 +210,36 @@ class Env(gym.Env):
             dict({"collision": done, "goal": goal}),
         )
 
-    def _get_info(self):
-        position = 0
-        return dict({"position": position})
-
-    def reset(self, seed=None, options=None):
-        super().reset(seed=seed)
+    def reset_callback(
+        self,
+        _: EnvironmentObservation.Request,
+        response: EnvironmentObservation.Response,
+    ):
 
         observation, _ = self._get_obs()
-        info = self._get_info()
 
-        self.respawn_goal.respawn_entity()
-        self.goal_x = self.respawn_goal.goal_position.position.x
-        self.goal_y = self.respawn_goal.goal_position.position.y
+        while not self.respawn_goal_client.wait_for_service(timeout_sec=1.0):
+            self.get_logger().info("Waiting for service respawn goal...")
 
-        return observation, info
+        respawn_goal_request = self.respawn_goal_client.call_async(
+            RespawnGoal.Request()
+        )
+
+        rclpy.spin_until_future_complete(self, respawn_goal_request, timeout_sec=3.0)
+
+        self.get_logger().debug(
+            f" Respawn goal Response: {respawn_goal_request.result().response}"
+        )
+
+        # TODO: make respawn goal to set goal position parameters.
+        # self.goal_position.x = respawn_goal_request.result().goal_position.position.x
+        # self.goal_position.y = respawn_goal_request.result().goal_position.position.y
+
+        response.observation.laser = self.laser_scan
+        response.observation.distance_to_goal = observation["distance_to_goal"]
+        response.observation.angle_to_goal = observation["angle_to_goal"]
+
+        return response
 
     def step(self, action):
         linear = action[0]
@@ -187,33 +252,27 @@ class Env(gym.Env):
 
         observation, is_terminal = self._get_obs()
         reward = self.set_reward(observation, is_terminal)
-        info = self._get_info()
         done = is_terminal["collision"]
         truncated = is_terminal["goal"]
 
-        return observation, reward, done, truncated, info
+        return observation, reward, done, truncated
 
 
 if __name__ == "__main__":
-    import rclpy
-
     rclpy.init()
 
-    node = rclpy.create_node("tb3_gym_env")
-    node.get_logger().set_level(rclpy.logging.LoggingSeverity.DEBUG)
+    env_node = Env("tb3_environment")
 
-    node.get_logger().info("Starting tb3_gym_env node")
-    env = Env(node)
-
-    env.reset()
+    env_executor = rclpy.executors.MultiThreadedExecutor(2)
+    env_executor.add_node(env_node)
 
     try:
-        rclpy.spin(node)
+        env_executor.spin()
     except KeyboardInterrupt:
         pass
     except ExternalShutdownException:
         sys.exit(1)
     finally:
         print("\nDestroying node")
+        env_executor.shutdown()
         rclpy.try_shutdown()
-        node.destroy_node()

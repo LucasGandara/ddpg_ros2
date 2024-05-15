@@ -16,6 +16,8 @@ from rclpy.executors import ExternalShutdownException
 from rclpy.logging import LoggingSeverity
 from rclpy.node import Node
 
+from ddpg_ros2.srv import RespawnGoal
+
 
 class Respawn(Node):
     def __init__(self, node_name, logging_level=LoggingSeverity.INFO) -> None:
@@ -25,7 +27,7 @@ class Respawn(Node):
 
         self.__file_path = os.path.dirname(os.path.realpath(__file__))
         self.__model_path = self.__file_path.replace(
-            "/ddpg_ros2/ddpg_ros2", "/ddpg_ros2/models/goal.sdf"
+            "/ddpg_ros2/nodes", "/ddpg_ros2/models/goal.sdf"
         )
         self.__file = open(self.__model_path, "r")
         self.model_description = self.__file.read()
@@ -53,6 +55,10 @@ class Respawn(Node):
             DeleteEntity, "/delete_entity", callback_group=self.callback_group_1
         )
 
+        self.create_service(RespawnGoal, "respawn_env_goal", self.respawn_goal_callback)
+        self.create_service(RespawnGoal, "delete_model", self.delete_model_callback)
+        self.create_service(RespawnGoal, "get_position", self.get_position_callback)
+
     def check_model_call(self) -> None:
         self.get_logger().info("Checking model")
         self.goal_model_check = False
@@ -73,11 +79,12 @@ class Respawn(Node):
                 self.goal_model_check = True
                 self.get_logger().debug("List model service: Model found!")
 
-    def respawn_goal(self, request, response) -> None:
+    def respawn_goal_callback(
+        self, _: RespawnGoal.Request, response: RespawnGoal.Response
+    ) -> RespawnGoal.Response:
         self.get_logger().info("Respawning goal")
 
         if not self.goal_model_check:
-            self.get_logger().debug("Respawning goal")
             while not self.spawn_entity_client.wait_for_service(timeout_sec=1.0):
                 self.get_logger().info("service not available, waiting again...")
 
@@ -99,7 +106,13 @@ class Respawn(Node):
             self.get_logger().debug("Spawn entity service response received")
             self.get_logger().info(spawn_entity_request.result().status_message)
 
-    def delete_model(self) -> None:
+            response.response = spawn_entity_request.result().status_message
+
+            return response
+
+    def delete_model_callback(
+        self, _: RespawnGoal.Request, response: RespawnGoal.Response
+    ) -> None:
         self.get_logger().info("Deleting goal model")
         while not self.delete_entity_client.wait_for_service(timeout_sec=2.0):
             self.node.get_logger().info("service not available, waiting again...")
@@ -110,8 +123,15 @@ class Respawn(Node):
         rclpy.spin_until_future_complete(self, delete_entity_request)
         self.get_logger().info(delete_entity_request.result().status_message)
 
-    def get_position(self, position_check=False) -> None:
+        response.response = delete_entity_request.result().status_message
+
+        return response
+
+    def get_position_callback(
+        self, _: RespawnGoal.Request, response: RespawnGoal.Response
+    ) -> None:
         self.get_logger().debug("Getting goal position")
+        position_check = True
         while position_check:
             goal_x_list = [
                 0.6,
@@ -147,7 +167,6 @@ class Respawn(Node):
             self.index = random.randrange(0, 13)
             goal_x = self.goal_position.position.x
             goal_y = self.goal_position.position.y
-            self.get_logger().debug(f"Goal position: {goal_x}, {goal_y}")
 
             if self.last_index == self.index:
                 position_check = True
@@ -160,13 +179,17 @@ class Respawn(Node):
 
             self.get_logger().debug(f"Goal position: {goal_x}, {goal_y}")
 
+        response.response = "success"
+
+        return response
+
 
 if __name__ == "__main__":
     rclpy.init()
 
     respawn_node = Respawn("respawn_goal", logging_level=LoggingSeverity.DEBUG)
 
-    respawn_executor = rclpy.executors.MultiThreadedExecutor(3)
+    respawn_executor = rclpy.executors.MultiThreadedExecutor(2)
     respawn_executor.add_node(respawn_node)
 
     try:

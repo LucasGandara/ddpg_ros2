@@ -7,12 +7,13 @@ import sys
 import gymnasium as gym
 import numpy as np
 import rclpy
+import rclpy.callback_groups
+import rclpy.client
 import rclpy.executors
 import tensorflow as tf
 from geometry_msgs.msg import Twist
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
-from tb3_gym_env import Env
 from utils import OUActionNoise, get_actor, get_critic
 
 
@@ -36,29 +37,14 @@ class DDPG(Node):
 
         self.get_logger().info("Starting DDPG Node")
 
-        self.env = Env(self)
-
-        assert not isinstance(
-            self.env.action_space, gym.spaces.Discrete
-        ), "Action space must be continuous"
-
-        self.num_states = (
-            self.env.observation_space["laser"].shape[0]
-            + self.env.observation_space["distance_to_goal"].shape[0]
-            + self.env.observation_space["angle_to_goal"].shape[0]
-        )
+        self.num_states = self.get_parameter("num_observation_space").value
         self.get_logger().info(f"Size of states --> {self.num_states}")
 
-        self.upper_bound = self.env.action_space["linear"].high[0]
-        self.lower_bound = self.env.action_space["linear"].low[0]
+        self.upper_bound = self.get_parameter("upper_bound").value
+        self.lower_bound = self.get_parameter("lower_bound").value
 
-        self.num_actions = (
-            self.env.action_space["linear"].shape[0]
-            + self.env.action_space["angular"].shape[0]
-        )
+        self.num_actions = self.get_parameter("num_actions").value
         self.get_logger().info(f"Size of actions --> {self.num_actions}")
-
-        self.rate = self.create_rate(0.5)
 
         # Hyperparameters
         std_dev = std_dev
@@ -114,6 +100,12 @@ class DDPG(Node):
 
         signal.signal(signal.SIGINT, self.signal_handler)
 
+        self.callback_group_1 = rclpy.callback_groups.ReentrantCallbackGroup()
+
+        self.env_client = rclpy.client()
+
+        self.rate = self.create_rate(0.5)
+
     def signal_handler(self, _, __):
         print("\nDestroying node")
         self.cmd_publisher = self.create_publisher(Twist, "/cmd_vel", 10)
@@ -159,7 +151,7 @@ class DDPG(Node):
         for ep in range(total_episodes):
             self.get_logger().debug(f"Episode {ep} of {total_episodes}")
 
-            prev_state, _ = self.env.reset()
+            prev_state, _ = self.env.reset_callback()
             laser = prev_state["laser"]
             distance_to_goal = [prev_state["distance_to_goal"]]
             angle_to_goal = [prev_state["angle_to_goal"]]
@@ -206,8 +198,6 @@ class DDPG(Node):
 
                 if done:
                     break
-
-                rclpy.spin_once(self)
 
 
 def main(args=None):
