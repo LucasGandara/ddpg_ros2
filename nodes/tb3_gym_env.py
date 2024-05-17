@@ -231,9 +231,12 @@ class Env(Node):
             f" Respawn goal Response: {respawn_goal_request.result().response}"
         )
 
-        # TODO: make respawn goal to set goal position parameters.
-        # self.goal_position.x = respawn_goal_request.result().goal_position.position.x
-        # self.goal_position.y = respawn_goal_request.result().goal_position.position.y
+        self.goal_position.x = (
+            self.get_parameter("goal_position_x").get_parameter_value().integer_value
+        )
+        self.goal_position.y = (
+            self.get_parameter("goal_position_y").get_parameter_value().integer_value
+        )
 
         response.observation.laser = self.laser_scan
         response.observation.distance_to_goal = observation["distance_to_goal"]

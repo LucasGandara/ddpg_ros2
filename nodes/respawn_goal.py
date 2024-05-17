@@ -12,6 +12,7 @@ import rclpy.callback_groups
 import rclpy.executors
 from gazebo_msgs.srv import DeleteEntity, GetModelList, SpawnEntity
 from geometry_msgs.msg import Pose
+from rcl_interfaces.msg import ParameterDescriptor, ParameterType
 from rclpy.executors import ExternalShutdownException
 from rclpy.logging import LoggingSeverity
 from rclpy.node import Node
@@ -53,6 +54,28 @@ class Respawn(Node):
         )
         self.delete_entity_client = self.create_client(
             DeleteEntity, "/delete_entity", callback_group=self.callback_group_1
+        )
+
+        self.declare_parameter(
+            "goal_position_x",
+            self.goal_position.position.x,
+            descriptor=ParameterDescriptor(
+                name="Goal X position",
+                type=ParameterType.PARAMETER_INTEGER,
+                description="X axe position of the goal",
+                additional_constraints="The value must be an integer",
+            ),
+        )
+
+        self.declare_parameter(
+            "goal_position_y",
+            self.goal_position.position.y,
+            descriptor=ParameterDescriptor(
+                name="Goal Y position",
+                type=ParameterType.PARAMETER_INTEGER,
+                description="Y axe position of the goal",
+                additional_constraints="The value must be an integer",
+            ),
         )
 
         self.create_service(RespawnGoal, "respawn_env_goal", self.respawn_goal_callback)
@@ -165,8 +188,6 @@ class Respawn(Node):
             ]
 
             self.index = random.randrange(0, 13)
-            goal_x = self.goal_position.position.x
-            goal_y = self.goal_position.position.y
 
             if self.last_index == self.index:
                 position_check = True
@@ -177,7 +198,19 @@ class Respawn(Node):
             self.goal_position.position.x = goal_x_list[self.index]
             self.goal_position.position.y = goal_y_list[self.index]
 
-            self.get_logger().debug(f"Goal position: {goal_x}, {goal_y}")
+            self.set_parameters(
+                [
+                    rclpy.parameter.Parameter(
+                        "goal_position_x", self.goal_position.position.x
+                    ),
+                    rclpy.parameter.Parameter(
+                        "goal_position_y", self.goal_position.position.y
+                    ),
+                ]
+            )
+            self.get_logger().debug(
+                f"Goal position: {self.goal_position.position.x}, {self.goal_position.position.y}"
+            )
 
         response.response = "success"
 
