@@ -61,7 +61,7 @@ class Respawn(Node):
             self.goal_position.position.x,
             descriptor=ParameterDescriptor(
                 name="Goal X position",
-                type=ParameterType.PARAMETER_INTEGER,
+                type=ParameterType.PARAMETER_DOUBLE,
                 description="X axe position of the goal",
                 additional_constraints="The value must be an integer",
             ),
@@ -72,7 +72,7 @@ class Respawn(Node):
             self.goal_position.position.y,
             descriptor=ParameterDescriptor(
                 name="Goal Y position",
-                type=ParameterType.PARAMETER_INTEGER,
+                type=ParameterType.PARAMETER_DOUBLE,
                 description="Y axe position of the goal",
                 additional_constraints="The value must be an integer",
             ),

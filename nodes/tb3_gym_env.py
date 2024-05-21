@@ -24,7 +24,7 @@ from ddpg_ros2.srv import EnvironmentObservation, RespawnGoal
 class Env(Node):
 
     def __init__(self, node_name, debug_level=LoggingSeverity.INFO) -> None:
-        super().__init__(node_name)
+        super().__init__(node_name, allow_undeclared_parameters=True)
         self.get_logger().set_level(debug_level)
 
         self.get_logger().info("Starting tb3_gym_env node")
@@ -80,6 +80,7 @@ class Env(Node):
                 additional_constraints="The value must be an integer",
             ),
         )
+
         self.declare_parameter(
             "upper_bound",
             1.5,
@@ -231,11 +232,19 @@ class Env(Node):
             f" Respawn goal Response: {respawn_goal_request.result().response}"
         )
 
-        self.goal_position.x = (
-            self.get_parameter("goal_position_x").get_parameter_value().integer_value
+        self.goal_position.position.x = (
+            self.get_parameter("ddpg_ros2/respawn_goal/goal_position_x")
+            .get_parameter_value()
+            .double_value
         )
-        self.goal_position.y = (
-            self.get_parameter("goal_position_y").get_parameter_value().integer_value
+        self.goal_position.position.y = (
+            self.get_parameter("ddpg_ros2/respawn_goal/goal_position_y")
+            .get_parameter_value()
+            .double_value
+        )
+
+        self.get_logger().info(
+            f"Goal position: {self.goal_position.position.x}, {self.goal_position.position.y}"
         )
 
         response.observation.laser = self.laser_scan

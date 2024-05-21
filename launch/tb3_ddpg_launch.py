@@ -34,6 +34,6 @@ def generate_launch_description():
                 namespace="ddpg_ros2",
                 output="screen",
             ),
-            # Node(package="ddpg_ros2", executable="tb3_ddpg.py", name="ddpg"),
+            Node(package="ddpg_ros2", executable="tb3_ddpg.py", name="ddpg"),
         ]
     )
